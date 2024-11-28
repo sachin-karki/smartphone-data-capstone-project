@@ -1,0 +1,243 @@
+
+---
+title: "Methods of Preparing and Analyzing the Dataset"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+### Setting and installing mutltiple packages
+
+```{r setup}
+pacman::p_load(ggplot2, 
+               tidyverse, 
+               gdata,
+               corrplot,
+               visdat,
+               naniar,
+               PerformanceAnalytics,
+               MASS,
+               nnet,
+               gdata,
+               broom)
+```
+
+
+# Part 1 - Activity
+## Clusted correlation plot (heatmap style)
+### Looking for correlation(cluster) in data and cheking generall tableOne for any relationship between variables with Prsnlty_type 
+### Seems like there are some correlation between calling Family member and calling friends in generall (will be excluded for variable selection)
+
+```{r echo=FALSE}
+# read xlsx file # "." will be treated as na 
+data_activity <- gdata::read.xls("Activity.xlsx", na.strings = c("."))
+
+# removing all na's 
+data_activity_na_rm <- data_activity %>% na.omit 
+#Plotting a Correlation
+corrplot( cor(data_activity_na_rm),  order = 'hclust',tl.cex =0.5,number.cex=3,title="Activity with NA removed", mar=c(0,0,1,0)) # plotting correlation plot
+```
+
+## Correlation with spearmen score
+### High correlated factor(variables) will be considered to be removed. Because high correlated values with harm analysis of independent variable and their performance
+ 
+
+```{r echo=FALSE,warning=FALSE}
+correlation_graph <- chart.Correlation(data_activity_na_rm,
+                 method="spearman",
+                 histogram=TRUE,
+                pch=32,exact=FALSE)
+```
+
+## Checking missing value
+### around 55 people has some relationship within missing data. Variables "Study_Purposes" and "Rlgn_Prctces" has highest missing value, which can cause bias, and will be excluded for fist data analysis
+
+```{r echo=FALSE}
+gg_miss_upset(data_activity, nsets = 10,nintersects = 50)
+```
+ 
+## TableOne
+### data sorting for categorical values 
+### creating tableone for generall overview again with cohen's D. With tableone we can observe possible variables(p <0.157) which affects personality for example smoking has p value 0.05 and stadard mean difference 0.2 between personality.
+
+```{r echo=FALSE} 
+data_activity_clean <- data_activity %>% 
+                          mutate(Gender =as.factor(Gender),
+                                 Prsnlty_type = as.factor(Prsnlty_type),
+                                 Smoking=as.factor(Smoking),
+                                 Alcohol_drnk=as.factor(Alcohol_drnk),
+                                 CallFamMem=as.factor(CallFamMem),
+                                 CallFrnds=as.factor(CallFrnds),
+                                 Txtng=as.factor(Txtng),
+                                 Entertainment=as.factor(Entertainment),
+                                 RdNews=as.factor(RdNews),
+                                 OthRsns=as.factor(OthRsns),
+                                 ExcessveSmrtPhn_Use = as.factor(ExcessveSmrtPhn_Use)) %>% 
+                          na.omit 
+Myvariables <- c("AGE" ,  "ExcessveSmrtPhn_Use","Gender"  ,"Smoking" ,"Alcohol_drnk", "Txtng","CallFamMem","CallFrnds" ,"Entertainment" ,  "RdNews" ,"OthRsns")
+cateVars <- c("Gender"  ,"Smoking" ,"Alcohol_drnk", "Txtng","CallFamMem","CallFrnds" ,"Entertainment" ,  "RdNews" ,"OthRsns"  )
+
+univarante_1 <- tableone::CreateTableOne(strata = "Prsnlty_type", data = data_activity_clean, vars= Myvariables , factorVars = cateVars ) %>%
+                print(noSpaces = TRUE, printToggle = FALSE, exact = "stage",smd = TRUE,quote = FALSE)
+univarante_1 
+```
+
+
+## Variable Selection with Backward AIC and t-test 
+
+### Variable selection will be conducted with AIC value within Backward Algorith for rediction of error rate. First Variable selection is conducted with out "ID" and "CallFrnds". Because CallFrnds had high correlation (0.7>) to variable "callFmy"  to secure indenpendecy of variables. 
+
+
+### After variable selection variables  "AGE" , "Smoking", and "Study_Purposes" are selected. with reduced value AIC 495.90 (original value was 507.83)  
+
+### In final model, we can observe that one point increase of Age will give us 0.88 Odd ratio increased froim personality type = 0  to personality type = 1. Smoking is the strongest facter with OR which give 1.78. Both of result has p value < 0.05 -> significant. Test score between null model and final is significant(Chi-test), that represent selected values after stepwise function are useful with our hypothesis test.
+
+```{r  echo=FALSE}
+data_activity_for_selection <- data_activity_clean %>% dplyr::select(-CallFamMem,-CallFrnds ) %>% na.omit() # excluding not interested var.
+model_1 <- glm(Prsnlty_type~.,data=data_activity_for_selection , family = binomial ) # Logistic regression will be applied as our interested variable (personal type has two values)
+model_1_null <- glm(Prsnlty_type~1,data=data_activity_for_selection , family = binomial ) # null model, only with intercept 
+model_01_selection <- stepAIC(model_1,direction="backward",trace = FALSE) # backward stepwise algorithm =  method for var. selection 
+model_01_selected <- glm(Prsnlty_type ~ AGE + Smoking + Study_Purposes ,data = data_activity_for_selection, # after stepwise AGE + Smoking + Study_Purposes are selected
+                   family = binomial(link="logit")) 
+model_01_selected %>% parameters::parameters(exponentiate = TRUE, df_method = "wald",summary = FALSE) # getting parameters, exponentiate is used of log odds
+anova(model_01_selected,
+      model_1_null,
+      test="Chisq") 
+```
+
+### Second, I conducted multinomial regression with "ExcessveSmrtPhn_Use", as the variabls has four levels. For this regression variables, "ID","Study_Purposes", and "Rlgn_Prctces", are excluded, because of high missing value rate to avoid biased result.
+
+* Following result is overviewed with siginigicant level p < 0.05
++ The relative risk ratio for a one-unit increase in the variable Gender is  0.41 for being in  ExcessveSmrtPhn_Use:1 vs. ExcessveSmrtPhn_Use:2.
++ The relative risk ratio for a one-unit increase in the variable Entertainment is   1.88  for being in  ExcessveSmrtPhn_Use:3 vs. ExcessveSmrtPhn_Use:2.
+
+```{r  echo=FALSE}
+ggplot(data_activity_for_selection, aes(ExcessveSmrtPhn_Use)) + geom_bar() + ggtitle("Checking ExcessveSmrtPhn_Use's distribution ")+ theme_bw() # general overview with smartphone use through data
+
+data_activity_clean$ExcessveSmrtPhn_Use_2 <- relevel( data_activity_clean$ExcessveSmrtPhn_Use , ref=3 ) # for multinom regression, we need reference to compare, here level 2 will be used for comparison to other levels 
+model_2 <- nnet::multinom(ExcessveSmrtPhn_Use_2~ AGE+ Prsnlty_type + Gender + Smoking  + Txtng + 
+    Entertainment+RdNews + OthRsns,data=dplyr::select(data_activity_clean, -ID,-Study_Purposes,-Rlgn_Prctces) ) # selecting something needed
+model_2 %>% parameters::parameters(exponentiate = TRUE,df_method = "wald",summary = FALSE) # getting parameter
+```
+
+
+### Third, generalized linear regression is conducted with "ExcessveSmrtPhn_Use" for variable selection, selecting any variables p < 0.157 -> "Gender", "Smoking" , "CallFamMem", "Entertainment", and "OthRsns".
+
+* Following result is overviewed with siginigicant level p < 0.05
++ one-unit increase in the variable Gender is associated with the decrease in the log odds of being in  ExcessveSmrtPhn_Use:1 vs. ExcessveSmrtPhn_Use:2 in the amount of .91
++ one-unit increase in the variable Entertainment is associated with the increase in the log odds of being in  ExcessveSmrtPhn_Use:3 vs. ExcessveSmrtPhn_Use:2 in the amount of 0.62 .
+
+```{r  echo=FALSE}
+lm(ExcessveSmrtPhn_Use ~ ., data = na.omit(dplyr::select(data_activity, -ID))) %>% parameters::parameters(df_method = "wald",summary = TRUE) #  linear regression
+model_3 <- nnet::multinom(ExcessveSmrtPhn_Use_2~ Gender+Smoking+CallFamMem+Entertainment+OthRsns ,data=na.omit(data_activity_clean) ) # multinomial regression with selected one from linear regression
+model_3 %>% parameters::parameters(df_method = "wald",summary = FALSE)
+
+ggplot(data_activity_for_selection, aes(y = Smoking, x = ExcessveSmrtPhn_Use, color=Smoking)) +
+  geom_jitter(alpha= 0.4) +geom_boxplot(alpha= 0.6)+facet_wrap(~Prsnlty_type) + ggtitle("Smartphone use vs Smoking") +theme_minimal()
+
+```
+
+# Part II - Effect
+
+
+```{r echo=FALSE}
+data_effects<- read.xls("Effects.xlsx", na.strings = c(".")) #reading data
+data_effects_na_rm <- data_effects %>% na.omit # na.omit
+corrplot( cor(data_effects_na_rm),  order = 'hclust',tl.cex =0.5,number.cex=3,title="Effects with NA removed", mar=c(0,0,1,0))
+```
+
+## Correlation with spearmen score 
+### Here we found that "total addition score" , "Behaivor", "depression" , "Anxiety score" and "Funcitional impairment score" correlated with high score. For Dependency with analysis, we will exclude them for further variable selection.
+
+```{r echo=FALSE,warning=FALSE}
+correlation_graph_2 <- chart.Correlation(data_effects_na_rm,
+                 method="spearman",
+                 histogram=TRUE,
+                pch=32,exact=FALSE)
+```
+
+## Checking missing value
+### With glance of data. We see around 47 people has generally missing in data and approximatly 182 people have relationship in missing data form. 
+
+```{r echo=FALSE}
+gg_miss_upset(data_effects, nsets = 10,nintersects = 50) # visualize
+```
+ 
+## Cleaning data
+### data sorting for categorical values 
+```{r  echo=FALSE}
+data_effects_clean <- data_effects %>% 
+                          mutate(Gender =as.factor(Gender),
+                                 Prsnlty_type = as.factor(Prsnlty_type),
+                                 LifeJoylss_NoSmrtPhn=as.factor(LifeJoylss_NoSmrtPhn),
+                                 NgtvePhysHlthEffcts_SmrtPhnUse=as.factor(NgtvePhysHlthEffcts_SmrtPhnUse),
+                                 DcreasdSlpTimeQulty_SmrtPhnUse=as.factor(DcreasdSlpTimeQulty_SmrtPhnUse),
+                                 TiredDaytime_latenightSmrtPhnUse=as.factor(TiredDaytime_latenightSmrtPhnUse),
+                                 Lttl_IntrstDoingThngs=as.factor(Lttl_IntrstDoingThngs),
+                                 Feel_Deprssd=as.factor(Feel_Deprssd),
+                                 Depression_score=as.factor(Depression_score),
+                                 Feel_anxious=as.factor(Feel_anxious),
+                                 NotAble_Stpworry = as.factor(NotAble_Stpworry),
+                                 Anxiety_score= as.factor(Anxiety_score)) %>% 
+                          dplyr::select(-ID)
+```
+## Table One
+
+### with tableone we can observe possible variables(p <0.157) which affects our outcome - > CannotHveMeal_NosmrtPhn,Compulsive_Behavior,Functional_Impairment,TotAddiction_Score,Lttl_IntrstDoingThngs,Depression_score,Feel_anxious,NotAble_Stpworry
+
+```{r  echo=FALSE}
+#creating tableone for generall overview again with cohen's D
+Myvariables_2 <- c("AGE", "Gender","LifeJoylss_NoSmrtPhn" ,  "NgtvePhysHlthEffcts_SmrtPhnUse",  
+"DcreasdSlpTimeQulty_SmrtPhnUse"  ,"CannotHveMeal_NosmrtPhn", "TiredDaytime_latenightSmrtPhnUse", "Compulsive_Behavior" , "Functional_Impairment" ,          
+"TotAddiction_Score","Lttl_IntrstDoingThngs", "Feel_Deprssd","Depression_score" , "Feel_anxious"  ,                  
+"NotAble_Stpworry")
+cateVars_2 <- c("Gender"  ,"LifeJoylss_NoSmrtPhn" ,"NgtvePhysHlthEffcts_SmrtPhnUse", "DcreasdSlpTimeQulty_SmrtPhnUse","TiredDaytime_latenightSmrtPhnUse","Lttl_IntrstDoingThngs" ,
+                "Feel_Deprssd" ,  "Depression_score" ,"Feel_anxious","NotAble_Stpworry",  "Anxiety_score")
+#tableOne
+univarante_2 <- tableone::CreateTableOne(strata = "Prsnlty_type", data = data_effects_clean, vars= Myvariables_2 , factorVars = cateVars_2 ) %>%
+                print(noSpaces = TRUE, printToggle = FALSE, exact = "stage",smd = TRUE,quote = FALSE)
+univarante_2 
+
+```
+
+
+### Here, "Depression_score", "TotAddiction_Score", "Compulsive_Behavior","Functional_Impairment" are exlcuded, as an association with the other variables are larger than 0.7. 
+### "AGE" , "CannotHveMeal_NosmrtPhn"," Lttl_IntrstDoingThngs", and "NotAble_Stpworry" are selected after backward algorithm. 
+# Observation :  AIC reduced from 340.6 to 309.3 with p value < 0.05
+* One facoter increase of AGE will incread odds ratio of 0.78 to personality 0 to 1
++ 1.69 OR with CannotHveMeal_NosmrtPhn by personality 0 to 1
++ NotAble_Stpworry shows notable OR between his level from 2 (OR : 5.3 ) to Personality type  
++ Model is siginificant that inbetween final variables, there are relevant predictor to variable "Prsnlty_type"
+
+```{r echo=FALSE}
+
+data_effects_for_selection <- data_effects_clean %>% na.omit() %>% dplyr::select(-Depression_score, -TotAddiction_Score, -Compulsive_Behavior,-Functional_Impairment)  # requeired for indepency of data analyse 
+
+model_10 <- glm(Prsnlty_type~.,data=data_effects_for_selection , family = binomial )
+model_10_null <- glm(Prsnlty_type~1,data=data_effects_for_selection , family = binomial )
+model_10_selection <- MASS::stepAIC(model_10,direction="backward",trace = FALSE)
+model_10_selected <- glm(Prsnlty_type ~  AGE + CannotHveMeal_NosmrtPhn + 
+    Lttl_IntrstDoingThngs + NotAble_Stpworry,data = data_effects_for_selection,
+                   family = binomial(link="logit")) 
+model_10_selected %>% parameters::parameters(exponentiate = TRUE, df_method = "wald",summary = FALSE)
+anova(model_10_selected,
+      model_10_null,
+      test="Chisq")
+```
+## Data Visualization with Violinplot
+
+```{r echo=FALSE}
+ggplot(data_effects_for_selection,  aes(x= NotAble_Stpworry , y= CannotHveMeal_NosmrtPhn , color= CannotHveMeal_NosmrtPhn )) +geom_jitter(alpha= 0.4 )+ geom_violin(alpha= 0.5) + facet_wrap(~Prsnlty_type) + ggtitle("Comparison within Prsnlty_type", subtitle = "between NotAble_Stpworry and CannotHveMeal_NosmrtPhn ") 
+```
+
+## Data Visualization with Boxplot
+
+```{r echo=FALSE}
+
+ggpubr::ggboxplot(data_effects_for_selection, x = "NotAble_Stpworry", y = "CannotHveMeal_NosmrtPhn", color = "Prsnlty_type",
+          palette = c("#00AFBB", "#E7B800"))
+
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
